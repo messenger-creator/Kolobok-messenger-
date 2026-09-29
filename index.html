@@ -977,5 +977,40 @@ const iv=setInterval(async()=>{
 }catch(e){}
 })();
 </script>
+ <script>
+/* ===== Отправка пуша при новом сообщении ===== */
+(function(){
+const PUSH_URL="https://kolobok-push.sashok08700.workers.dev";
+const proto=firebase.firestore.CollectionReference.prototype;
+const orig=proto.add;
+proto.add=function(data){
+  const p=orig.apply(this,arguments);
+  try{
+    const m=/^chats\/([^/]+)\/messages$/.exec(this.path);
+    if(m&&data&&data.from===uid){
+      p.then(async()=>{
+        const c=(typeof myChats==="function"?myChats():[]).find(x=>x.id===m[1]);
+        if(!c)return;
+        const others=(c.members||[]).filter(x=>x!==uid);
+        let tokens=[];
+        for(const id of others){
+          const s=await db.doc("pushTokens/"+id).get();
+          if(s.exists)tokens=tokens.concat(s.data().tokens||[]);
+        }
+        if(!tokens.length)return;
+        const who=(typeof users!=="undefined"&&users[uid]&&users[uid].name)||"Новое сообщение";
+        const body=data.text||(data.voice?"🎤 Голосовое сообщение":"📷 Фото");
+        fetch(PUSH_URL,{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({tokens:tokens,title:who,body:body.slice(0,120)})
+        }).catch(()=>{});
+      }).catch(()=>{});
+    }
+  }catch(e){}
+  return p;
+};
+})();
+ </script>
 </body>
 </html>
