@@ -7,7 +7,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <link rel="manifest" href="manifest.webmanifest">
-<meta name="theme-color" content="#3b82f6">
+<meta name="theme-color" content="#000000">
 <link rel="apple-touch-icon" href="icon-192.png">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <style>
@@ -306,7 +306,8 @@ function ask(title,ph,ok){modal(b=>{b.appendChild(el("h3","",title));const i=el(
  i.onkeydown=e=>{if(e.key==="Enter")o.onclick()};r.append(c,o);b.appendChild(r);setTimeout(()=>i.focus(),50)})}
 function sure(text,ok){modal(b=>{b.appendChild(el("h3","",text));const r=el("div","btns"),c=el("button","g","Отмена"),o=el("button","d","Да");
  c.onclick=closeM;o.onclick=()=>{closeM();ok()};r.append(c,o);b.appendChild(r)})}
-const uname=id=>users[id]?.name||"Неизвестный";
+var NICKS={};
+const uname=id=>(id!==uid&&NICKS[id])||users[id]?.name||"Неизвестный";
 
 function showReg(){
   const r=$("root");r.innerHTML="";$("tabhost").style.display="none";const w=el("div");w.id="reg";
@@ -595,9 +596,10 @@ function showPage(k){
     li(c,"＋","#2b9af0","Добавить по коду","Код есть в профиле у вашего друга",()=>{
       if((me.contacts||[]).length>=6)return toast("Можно добавить только 6 контактов");
       ask("Код контакта","6 символов",addContact)});
-    mc.forEach(id=>{const u=users[id],d=el("div","li"),x=el("div","lt");x.appendChild(el("div","tt",u.name));x.appendChild(el("div","ss",u.bio||"Нажмите, чтобы написать"));
-      const rm=el("button","g","✕");rm.onclick=e=>{e.stopPropagation();sure("Удалить "+u.name+" из контактов?",()=>setContacts((me.contacts||[]).filter(y=>y!==id)))};
-      d.append(avEl(u.av,46),x,rm);d.onclick=()=>openDM(id);c.appendChild(d)});
+    mc.forEach(id=>{const u=users[id],d=el("div","li"),x=el("div","lt");x.appendChild(el("div","tt",uname(id)));x.appendChild(el("div","ss",(NICKS[id]?u.name+" · ":"")+(u.bio||"Нажмите, чтобы написать")));
+      const rn=el("button","g","✎");rn.onclick=e=>{e.stopPropagation();renameContact(id)};
+      const rm=el("button","g","✕");rm.onclick=e=>{e.stopPropagation();sure("Удалить "+uname(id)+" из контактов?",()=>setContacts((me.contacts||[]).filter(y=>y!==id)))};
+      const av0=avEl(u.av,46);if(window.presDot)window.presDot(av0,id);d.append(av0,x,rn,rm);d.onclick=()=>openDM(id);c.appendChild(d)});
     if(!mc.length)w.appendChild(el("div","empty","Добавьте друга по его коду.\nМожно написать не более чем 6 контактам."));
   }else{
     head();
@@ -709,13 +711,17 @@ function msgMenu(m){const c=curChat();modal(b=>{b.appendChild(el("h3","","Соо
 /* ---- профиль другого человека ---- */
 function profile(id){const u=users[id];if(!u)return toast("Профиль не найден");
  modal(b=>{const w=el("div");w.style.textAlign="center";const a=avEl(u.av,96);a.style.fontSize="48px";w.appendChild(a);
-  const n=el("h3","",u.name);n.style.margin="10px 0 2px";w.appendChild(n);w.appendChild(el("div","ss",u.bio||"О себе не указано"));
+  const n=el("h3","",uname(id));n.style.margin="10px 0 2px";w.appendChild(n);
+  if(NICKS[id]&&id!==uid)w.appendChild(el("div","ss","Имя в профиле: "+u.name));
+  if(id!==uid&&window.presText){const ps=el("div","ss",window.presText(id));ps.className="ss pst";ps.dataset.pid=id;w.appendChild(ps)}
+  w.appendChild(el("div","ss",u.bio||"О себе не указано"));
   const cc=el("div","codec");cc.appendChild(el("div","stitle","Код для контактов"));cc.appendChild(el("div","cv",u.code||"—"));
   const cp=el("button","g","Скопировать код");cp.onclick=()=>{try{navigator.clipboard.writeText(u.code||"").then(()=>toast("Код скопирован"),()=>toast("Код: "+u.code))}catch(e){toast("Код: "+u.code)}};
   cc.appendChild(cp);w.appendChild(cc);b.appendChild(w);
   const r=el("div","btns");
   if(id!==uid&&!(me.contacts||[]).includes(id)){const ad=el("button","g","В контакты");ad.onclick=()=>{closeM();addContact(u.code)};r.appendChild(ad)}
   if(id!==uid){const wr=el("button","","Написать");wr.onclick=()=>{closeM();openDM(id)};r.appendChild(wr)}
+  if(id!==uid){const rnb=el("button","g","✎ Имя");rnb.onclick=()=>renameContact(id);r.appendChild(rnb)}
   const x=el("button","g","Закрыть");x.onclick=closeM;r.appendChild(x);b.appendChild(r)})}
 window.person=function(id){const r=el("div","row");r.style.cursor="pointer";r.append(avEl(users[id]?.av,32),el("div","",uname(id)+(id===uid?" (вы)":"")));
  r.onclick=e=>{if(e.target.closest("button"))return;closeM();profile(id)};return r};
@@ -820,6 +826,113 @@ window.showMembers=function(c){_sm(c);if(c.owner!==uid)return;const bt=$("box").
  if(bt){const s=el("button","g","⚙️ Настройки");s.onclick=()=>{closeM();groupSettings(c)};bt.insertBefore(s,bt.firstChild)}};
 })();
 
+</script>
+<script>
+/* ===== Переименование контактов + статус "в сети" ===== */
+(function(){
+const PING=60000,FRESH=130000;
+let PRES={},started=false;
+const fv=()=>firebase.firestore.FieldValue;
+const ms=t=>t?(t.toMillis?t.toMillis():+t):0;
+const hm=d=>String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");
+function isOn(id){const p=PRES[id];return !!(p&&p.on&&Date.now()-ms(p.ts)<FRESH)}
+window.presText=function(id){
+  const p=PRES[id];if(!p)return "не в сети";
+  if(isOn(id))return "в сети";
+  const t=ms(p.ts);if(!t)return "не в сети";
+  const d=new Date(t),n=new Date(),y=new Date(n.getFullYear(),n.getMonth(),n.getDate()-1);
+  if(d.toDateString()===n.toDateString())return "был(а) в "+hm(d);
+  if(d.toDateString()===y.toDateString())return "был(а) вчера в "+hm(d);
+  return "был(а) "+String(d.getDate()).padStart(2,"0")+"."+String(d.getMonth()+1).padStart(2,"0");
+};
+window.presDot=function(av,id){
+  if(!av||id===uid)return;
+  av.style.position="relative";
+  av.querySelectorAll(".dot").forEach(x=>x.remove());
+  if(isOn(id)){const d=document.createElement("span");d.className="dot";av.appendChild(d)}
+};
+const css=document.createElement("style");
+css.textContent=`.dot{position:absolute;right:-1px;bottom:-1px;width:13px;height:13px;border-radius:50%;background:#22c55e;border:2px solid var(--panel)}
+.pst.on,#head .t small.on{color:#22c55e}`;
+document.head.appendChild(css);
+
+/* --- обновление того, что видно на экране --- */
+function paint(){
+  try{
+    const c=typeof curChat==="function"?curChat():null;
+    const sm=document.querySelector("#head .t small");
+    if(c&&c.dm&&sm){const id=other(c);sm.textContent=presText(id);sm.classList.toggle("on",isOn(id))}
+    const l=document.getElementById("list");
+    if(l){
+      const q=document.getElementById("q"),qv=q?(q.value||"").trim().toLowerCase():"";
+      const all=myChats(),mc=qv?all.filter(x=>ctitle(x).toLowerCase().includes(qv)):all;
+      l.querySelectorAll(".row").forEach((r,i)=>{const x=mc[i];if(!x||!x.dm)return;const a=r.querySelector(".av");if(a)presDot(a,other(x))})
+    }
+    document.querySelectorAll(".pgs .card .li").forEach(li=>{});
+    const pst=document.querySelector("#box .pst");
+    if(pst){const id=pst.dataset.pid;pst.textContent=presText(id);pst.classList.toggle("on",isOn(id))}
+  }catch(e){}
+}
+const _rl=window.renderList;
+window.renderList=function(){_rl();paint()};
+const _rm=window.renderMain;
+window.renderMain=function(){_rm();paint()};
+const _sp=window.showPage;
+window.showPage=function(k){_sp(k);if(k==="contacts"){try{
+  const mc=(me.contacts||[]).filter(id=>users[id]&&users[id].name);
+  document.querySelectorAll(".pgs .card .li").forEach((li,i)=>{if(!i)return;const id=mc[i-1],a=li.querySelector(".av");if(id&&a)presDot(a,id)})}catch(e){}}};
+
+/* --- переименование --- */
+window.renameContact=function(id){
+  const u=users[id];if(!u||id===uid)return;
+  modal(b=>{
+    b.appendChild(el("h3","","Имя контакта"));
+    const i=el("input");i.maxLength=24;i.placeholder=u.name||"Имя";i.value=NICKS[id]||"";b.appendChild(i);
+    b.appendChild(el("small","","Настоящее имя: "+(u.name||"—")+". Видите новое имя только вы."));
+    const r=el("div","btns"),c=el("button","g","Отмена"),z=el("button","g","Сбросить"),o=el("button","","Сохранить");
+    c.onclick=closeM;
+    z.onclick=()=>{closeM();setNick(id,"")};
+    o.onclick=()=>{closeM();setNick(id,i.value.trim())};
+    i.onkeydown=e=>{if(e.key==="Enter")o.onclick()};
+    r.append(c,z,o);b.appendChild(r);setTimeout(()=>i.focus(),50);
+  });
+};
+async function setNick(id,name){
+  try{
+    await db.doc("nicks/"+uid).set({m:{[id]:name?name.slice(0,24):fv().delete()}},{merge:true});
+    if(name)NICKS[id]=name.slice(0,24);else delete NICKS[id];
+    refresh();toast(name?"Имя сохранено":"Имя сброшено");
+  }catch(e){toast("Ошибка: "+(e.message||e))}
+}
+function refresh(){
+  try{
+    if(document.getElementById("app")){renderList();if(curChat())renderMain()}
+    if(document.querySelector(".pgs .li")&&document.querySelector(".sh h2")&&/Контакты/.test(document.querySelector(".sh h2").textContent))showPage("contacts");
+  }catch(e){}
+}
+
+/* --- запуск после входа --- */
+function start(){
+  started=true;
+  db.doc("nicks/"+uid).onSnapshot(s=>{NICKS=(s.exists&&s.data().m)||{};refresh()},()=>{});
+  db.collection("presence").onSnapshot(s=>{
+    const before=JSON.stringify(Object.keys(PRES).map(k=>[k,isOn(k)]));
+    s.docs.forEach(d=>PRES[d.id]=d.data());
+    if(JSON.stringify(Object.keys(PRES).map(k=>[k,isOn(k)]))!==before)paint();
+    else{const c=curChat&&curChat();if(c&&c.dm)paint()}
+  },()=>{});
+  const ping=on=>{try{db.doc("presence/"+uid).set({on:on,ts:fv().serverTimestamp()})}catch(e){}};
+  const tick=()=>{if(document.visibilityState==="visible")ping(true)};
+  tick();setInterval(tick,PING);
+  setInterval(paint,30000);
+  document.addEventListener("visibilitychange",()=>{document.visibilityState==="visible"?ping(true):ping(false)});
+  window.addEventListener("pagehide",()=>ping(false));
+}
+const iv=setInterval(()=>{
+  if(started){clearInterval(iv);return}
+  if(typeof me!=="undefined"&&me&&typeof db!=="undefined"&&db){clearInterval(iv);start()}
+},800);
+})();
 </script>
 <script>
 /* ===== Push-уведомления (FCM) ===== */
