@@ -1648,5 +1648,180 @@ function fix(){
 setTimeout(()=>{try{toast("Обновлено v8")}catch(e){}},2500);
 })();
  </script>
+ <script>
+/* ===== «Печатает…» в личных чатах + ответ по свайпу ===== */
+(function(){
+const $=id=>document.getElementById(id);
+const now=()=>Date.now();
+const css=document.createElement("style");
+css.textContent=`
+.mr{touch-action:pan-y}
+#rp{position:absolute;left:0;right:58px;bottom:calc(100% + 6px);display:flex;align-items:center;gap:8px;padding:8px 8px 8px 12px;border-radius:18px;background:var(--isl);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);box-shadow:0 2px 12px #0003;z-index:7}
+#rp .rpt{flex:1;min-width:0;border-left:3px solid var(--accent);padding-left:8px}
+#rp b{display:block;font-size:13px;color:var(--accent)}
+#rp span{display:block;font-size:14px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#rp button{width:30px;height:30px;padding:0;border-radius:50%;flex:none}
+.rq{border-left:3px solid var(--accent);padding:2px 8px;margin:2px 0 4px;border-radius:4px;background:color-mix(in srgb,currentColor 10%,transparent);font-size:13px;cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:240px}
+.rq b{display:block;color:inherit;font-size:12px;font-weight:600;margin:0}
+.rq span{display:block;opacity:.85;overflow:hidden;text-overflow:ellipsis}
+.rpi{position:absolute;left:100%;top:50%;margin-left:8px;width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;transform:translateY(-50%)}
+@keyframes fl{50%{filter:brightness(1.35)}}.m.fl{animation:fl 1s}`;
+document.head.appendChild(css);
+
+/* ---------- «печатает…» ---------- */
+/* используем уже существующий документ presence/{uid} — новые правила Firestore не нужны */
+let TYP={},first=true,lastSent=0,sig="";
+const isTyping=(id,chat)=>{const o=TYP[id];return !!(o&&o.chat===chat&&now()-o.seen<5500)};
+function sendTyping(chat){
+  try{db.doc("presence/"+uid).set({typing:chat,tts:now()},{merge:true})}catch(e){}
+}
+document.addEventListener("input",e=>{
+  if(!e.target||e.target.id!=="in")return;
+  const c=curChat();
+  if(!c||!c.dm||!e.target.value.trim()||now()-lastSent<3000)return;
+  lastSent=now();sendTyping(c.id);
+});
+function stopTyping(){lastSent=0;setTimeout(()=>sendTyping(null),150)}
+document.addEventListener("click",e=>{if(e.target.closest&&e.target.closest("#send"))stopTyping()});
+document.addEventListener("keydown",e=>{if(e.key==="Enter"&&e.target&&e.target.id==="in")stopTyping()});
+
+function paintHead(){
+  const c=curChat(),sm=document.querySelector("#head .t small");
+  if(!c||!c.dm||!sm)return;
+  const id=other(c);
+  if(isTyping(id,c.id)){
+    if(sm.dataset.typ!=="1"){sm.dataset.typ="1";sm.textContent="печатает…";sm.classList.add("on")}
+  }else if(sm.dataset.typ==="1"){
+    delete sm.dataset.typ;
+    const t=window.presText?presText(id):"личный чат";
+    sm.textContent=t;sm.classList.toggle("on",t==="в сети");
+  }
+}
+function paintList(){
+  const l=$("list");if(!l)return;
+  const q=$("q"),qv=q?(q.value||"").trim().toLowerCase():"";
+  const all=myChats(),mc=qv?all.filter(c=>ctitle(c).toLowerCase().includes(qv)):all;
+  l.querySelectorAll(".row").forEach((r,i)=>{
+    const c=mc[i];if(!c||!c.dm||!isTyping(other(c),c.id))return;
+    const pv=r.querySelector(".pv");
+    if(pv){pv.textContent="печатает…";pv.style.color="var(--accent)"}
+  });
+}
+const _rl=window.renderList;
+window.renderList=function(){_rl.apply(this,arguments);paintList()};
+
+function tick(){
+  const s=myChats().filter(c=>c.dm&&isTyping(other(c),c.id)).map(c=>c.id).join(",");
+  if(s!==sig){sig=s;if($("list"))renderList()}
+  paintHead();
+}
+const iv=setInterval(()=>{
+  if(typeof me!=="undefined"&&me&&typeof db!=="undefined"&&db){
+    clearInterval(iv);
+    db.collection("presence").onSnapshot(s=>{
+      s.docChanges().forEach(ch=>{
+        const d=ch.doc.data(),id=ch.doc.id,tok=d.typing?d.typing+"|"+d.tts:"",o=TYP[id];
+        /* время считаем по своим часам, чтобы не зависеть от часов другого телефона */
+        if(!o||o.tok!==tok)TYP[id]={tok,chat:d.typing||null,seen:first?0:now()};
+      });
+      first=false;tick();
+    },()=>{});
+    setInterval(tick,1000);
+  }
+},800);
+
+/* ---------- ответ на сообщение ---------- */
+let reply=null;
+const prev=m=>m.text?String(m.text).replace(/\s+/g," ").slice(0,80):m.voice?"🎤 Голосовое сообщение":m.media?(m.media.sticker?"Стикер":"🖼 Фото"):"Сообщение";
+function clearReply(){reply=null;const r=$("rp");if(r)r.remove()}
+function drawRp(){
+  const bar=$("bar");if(!bar)return;
+  const old=$("rp");if(old)old.remove();
+  if(!reply)return;
+  const r=document.createElement("div");r.id="rp";
+  const w=el("div","rpt");
+  w.append(el("b","",reply.from===uid?"Вы":uname(reply.from)),el("span","",reply.t));
+  const x=el("button","g","✕");x.onclick=clearReply;
+  r.append(w,x);bar.appendChild(r);
+}
+function setReply(m){
+  if(!m||!m._id)return;
+  reply={id:m._id,from:m.from,t:prev(m)};
+  drawRp();
+  try{navigator.vibrate&&navigator.vibrate(15)}catch(e){}
+  const i=$("in");if(i)i.focus();
+}
+
+/* прикладываем replyTo к отправляемому сообщению */
+const CR=firebase.firestore.CollectionReference,_add=CR.prototype.add;
+CR.prototype.add=function(d){
+  if(reply&&d&&d.from===uid&&/^chats\/[^/]+\/messages$/.test(this.path)){
+    d={...d,replyTo:reply};clearReply();
+  }
+  return _add.call(this,d);
+};
+
+const _rm=window.renderMain;
+window.renderMain=function(){clearReply();const r=_rm.apply(this,arguments);paintHead();return r};
+
+const _dm=window.drawMsgs;
+window.drawMsgs=function(list){_dm.apply(this,arguments);decorate(list)};
+
+function decorate(list){
+  const box=$("msgs");if(!box)return;
+  [...box.querySelectorAll(".mr")].forEach((row,i)=>{
+    const m=list[i],bub=row.querySelector(".m");
+    if(!m||!bub)return;
+    row.dataset.mid=m._id||"";
+
+    /* цитата внутри сообщения */
+    if(m.replyTo){
+      const q=el("div","rq");
+      q.append(el("b","",m.replyTo.from===uid?"Вы":uname(m.replyTo.from)),el("span","",m.replyTo.t||""));
+      q.onclick=e=>{
+        e.stopPropagation();
+        const t=box.querySelector('.mr[data-mid="'+m.replyTo.id+'"]');
+        if(!t)return toast("Сообщение не найдено");
+        t.scrollIntoView({block:"center",behavior:"smooth"});
+        const b=t.querySelector(".m");
+        if(b){b.classList.add("fl");setTimeout(()=>b.classList.remove("fl"),1200)}
+      };
+      const nm=bub.querySelector("b");
+      bub.insertBefore(q,nm?nm.nextSibling:bub.firstChild);
+    }
+
+    /* свайп влево по сообщению */
+    let sx=0,sy=0,dx=0,lock=0,ic=null;
+    row.addEventListener("touchstart",e=>{
+      const t=e.touches[0];sx=t.clientX;sy=t.clientY;dx=0;lock=0;
+    },{passive:true});
+    row.addEventListener("touchmove",e=>{
+      const t=e.touches[0],x=t.clientX-sx,y=t.clientY-sy;
+      if(!lock){
+        if(Math.abs(y)>10&&Math.abs(y)>Math.abs(x)){lock=2;return}
+        if(x<-10&&Math.abs(x)>Math.abs(y)){
+          lock=1;row.style.transition="none";row.style.position="relative";
+          ic=el("span","rpi","↩");row.appendChild(ic);
+        }else return;
+      }
+      if(lock!==1)return;
+      dx=Math.max(-90,Math.min(0,x));
+      row.style.transform="translateX("+dx+"px)";
+      if(ic){const p=Math.min(1,-dx/60);ic.style.opacity=p;ic.style.transform="translateY(-50%) scale("+(0.6+0.4*p)+")"}
+    },{passive:true});
+    const end=()=>{
+      if(lock===1){
+        row.style.transition="transform .2s";row.style.transform="";
+        if(ic){ic.remove();ic=null}
+        if(dx<=-60)setReply(m);
+      }
+      lock=0;dx=0;
+    };
+    row.addEventListener("touchend",end,{passive:true});
+    row.addEventListener("touchcancel",end,{passive:true});
+  });
+}
+})();
+ </script>
 </body>
 </html>
