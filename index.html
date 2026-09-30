@@ -1328,5 +1328,27 @@ new MutationObserver(check).observe(document.body,{childList:true,subtree:true,c
  <style>
 #mn{border:1.5px solid color-mix(in srgb,var(--accent) 65%,transparent)!important}
  </style>
+ <script>
+/* ===== Яркая обводка у названия (v8) ===== */
+(function(){
+function fix(){
+  const all=document.querySelectorAll("body *");
+  for(const e of all){
+    if(e.children.length===0&&e.textContent.trim()==="Kolobok Messenger"){
+      let t=e;
+      for(let i=0;i<4&&t&&t!==document.body;i++){
+        if(parseFloat(getComputedStyle(t).borderTopWidth)>0)break;
+        t=t.parentElement;
+      }
+      if(!t||t===document.body)t=e;
+      t.style.setProperty("border","2px solid color-mix(in srgb,var(--accent) 75%,transparent)","important");
+      return;
+    }
+  }
+}
+setInterval(fix,1000);
+setTimeout(()=>{try{toast("Обновлено v8")}catch(e){}},2500);
+})();
+ </script>
 </body>
 </html>
