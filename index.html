@@ -1012,7 +1012,305 @@ proto.add=function(data){
 };
 })();
  </script>
- <script>
+  <script>
+/* ===== Звонки 1 на 1: одна кнопка → выбор аудио / видео ===== */
+(function(){
+const PUSH_URL="https://kolobok-push.sashok08700.workers.dev";
+const ICE={iceServers:[{urls:"stun:stun.relay.metered.ca:80"},{urls:"turn:global.relay.metered.ca:80",username:"e526841af336766854f193bc",credential:"0NAv3M2MApQcjCrH"},{urls:"turn:global.relay.metered.ca:80?transport=tcp",username:"e526841af336766854f193bc",credential:"0NAv3M2MApQcjCrH"},{urls:"turn:global.relay.metered.ca:443",username:"e526841af336766854f193bc",credential:"0NAv3M2MApQcjCrH"},{urls:"turns:global.relay.metered.ca:443?transport=tcp",username:"e526841af336766854f193bc",credential:"0NAv3M2MApQcjCrH"}]};
+let pc=null,stream=null,callId=null,unsub=null,timer=null,ui=null,audioEl=null,active=false,pending=null;
+let isVideo=false,rv=null,lv=null;
+
+const $=id=>document.getElementById(id);
+const say=t=>{try{toast(t)}catch(e){}};
+const nameOf=id=>{try{return (NICKS&&NICKS[id])||(users[id]&&users[id].name)||"Собеседник"}catch(e){return "Собеседник"}};
+
+function gathered(p){return new Promise(res=>{
+  if(p.iceGatheringState==="complete")return res();
+  const done=()=>{p.removeEventListener("icegatheringstatechange",chk);res()};
+  const chk=()=>{if(p.iceGatheringState==="complete")done()};
+  p.addEventListener("icegatheringstatechange",chk);
+  setTimeout(done,3500);
+})}
+
+/* --- видеоэлементы --- */
+function mkVideo(muted,css){
+  const v=document.createElement("video");
+  v.autoplay=true;v.muted=muted;v.playsInline=true;
+  v.setAttribute("playsinline","");
+  v.style.cssText=css;
+  return v;
+}
+function ensureVideos(){
+  if(!isVideo)return;
+  if(!rv)rv=mkVideo(false,"position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000");
+  if(!lv){
+    lv=mkVideo(true,"position:absolute;top:calc(env(safe-area-inset-top,0px) + 12px);right:12px;width:96px;height:140px;object-fit:cover;border-radius:14px;background:#222;z-index:2;transform:scaleX(-1)");
+    if(stream)lv.srcObject=stream;
+  }
+}
+
+function showUI(title,sub,buttons){
+  if(!ui){
+    ui=document.createElement("div");
+    document.body.appendChild(ui);
+  }
+  ui.style.cssText="position:fixed;inset:0;z-index:50;display:flex;align-items:"+(isVideo?"flex-end":"center")+";justify-content:center;padding:16px;background:"+(isVideo?"#000":"#000c");
+  ui.innerHTML="";
+  if(isVideo){
+    ensureVideos();
+    ui.append(rv,lv);
+    rv.play().catch(()=>{});lv.play().catch(()=>{});
+  }
+  const box=document.createElement("div");
+  box.style.cssText=isVideo
+    ?"position:relative;z-index:3;background:#0009;color:#fff;border-radius:22px;padding:16px 20px;width:100%;max-width:320px;text-align:center;margin-bottom:calc(env(safe-area-inset-bottom,0px) + 12px)"
+    :"background:var(--panel);color:var(--text);border-radius:22px;padding:28px 24px;width:100%;max-width:320px;text-align:center;box-shadow:0 12px 48px #0006";
+  const h=document.createElement("div");
+  h.style.cssText="font-size:20px;font-weight:600";
+  h.textContent=title;
+  const s=document.createElement("div");
+  s.id="callsub";
+  s.style.cssText=isVideo?"margin:6px 0 14px;opacity:.8":"margin:8px 0 22px;color:var(--muted)";
+  s.textContent=sub;
+  const row=document.createElement("div");
+  row.style.cssText="display:flex;gap:10px;justify-content:center";
+  buttons.forEach(([label,cls,fn])=>{
+    const b=document.createElement("button");
+    b.textContent=label;
+    if(cls)b.className=cls;
+    b.onclick=fn;
+    row.appendChild(b);
+  });
+  box.append(h,s,row);
+  ui.appendChild(box);
+}
+function hideUI(){if(ui){ui.remove();ui=null}}
+
+function cleanup(){
+  if(unsub){unsub();unsub=null}
+  if(timer){clearInterval(timer);timer=null}
+  if(pc){try{pc.close()}catch(e){}pc=null}
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
+  if(audioEl){audioEl.srcObject=null}
+  if(rv){rv.srcObject=null}
+  rv=null;lv=null;isVideo=false;
+  callId=null;active=false;
+  hideUI();
+}
+async function endCall(status){
+  const id=callId;
+  cleanup();
+  if(id){try{await db.collection("calls").doc(id).update({status:status||"ended"})}catch(e){}}
+}
+
+async function media(v){
+  try{return await navigator.mediaDevices.getUserMedia({audio:true,video:v?{facingMode:"user"}:false})}
+  catch(e){say(v?"Нет доступа к камере или микрофону":"Нет доступа к микрофону");return null}
+}
+function makePc(){
+  const p=new RTCPeerConnection(ICE);
+  stream.getTracks().forEach(t=>p.addTrack(t,stream));
+  p.ontrack=e=>{
+    if(isVideo){
+      ensureVideos();
+      rv.srcObject=e.streams[0];
+      rv.play().catch(()=>{});
+      return;
+    }
+    if(!audioEl){
+      audioEl=document.createElement("audio");
+      audioEl.autoplay=true;
+      audioEl.setAttribute("playsinline","");
+      document.body.appendChild(audioEl);
+    }
+    audioEl.srcObject=e.streams[0];
+    audioEl.play().catch(()=>{});
+  };
+  p.onconnectionstatechange=()=>{
+    if(p===pc&&p.connectionState==="failed"){say("Не удалось соединиться");endCall("ended")}
+  };
+  return p;
+}
+
+function startTimer(name){
+  const t0=Date.now();
+  showUI(name,"00:00",[["Завершить","d",()=>endCall("ended")]]);
+  timer=setInterval(()=>{
+    const x=Math.floor((Date.now()-t0)/1000);
+    const s=$("callsub");
+    if(s)s.textContent=String(Math.floor(x/60)).padStart(2,"0")+":"+String(x%60).padStart(2,"0");
+  },1000);
+}
+
+function watch(id,name,isCaller){
+  unsub=db.collection("calls").doc(id).onSnapshot(s=>{
+    if(!s.exists)return;
+    const d=s.data();
+    if(isCaller&&d.answer&&pc&&pc.signalingState==="have-local-offer"){
+      pc.setRemoteDescription(d.answer).catch(e=>say("Ошибка звонка: "+e.message));
+    }
+    if(d.status==="active"&&!active){active=true;startTimer(name)}
+    if(d.status==="ended"||d.status==="declined"||d.status==="missed"){
+      if(d.status==="declined")say("Звонок отклонён");
+      cleanup();
+    }
+  },e=>say("Ошибка звонка: "+e.message));
+}
+
+async function push(to,title,body){
+  try{
+    const s=await db.doc("pushTokens/"+to).get();
+    const tokens=(s.exists&&s.data().tokens)||[];
+    if(!tokens.length)return;
+    fetch(PUSH_URL,{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({tokens:tokens,title:title,body:body})
+    }).catch(()=>{});
+  }catch(e){}
+}
+
+async function startCall(video){
+  if(pc||callId)return say("Звонок уже идёт");
+  const c=typeof curChat==="function"?curChat():null;
+  if(!c||!c.dm)return;
+  const to=other(c);
+  stream=await media(video);
+  if(!stream)return;
+  isVideo=!!video;
+  try{
+    pc=makePc();
+    showUI(nameOf(to),"Вызываю…",[["Отмена","d",()=>endCall("ended")]]);
+    await pc.setLocalDescription(await pc.createOffer());
+    await gathered(pc);
+    if(!pc)return;
+    const ref=db.collection("calls").doc();
+    callId=ref.id;
+    await ref.set({
+      from:uid,to:to,chatId:c.id,status:"ringing",ts:Date.now(),video:!!video,
+      offer:{type:pc.localDescription.type,sdp:pc.localDescription.sdp}
+    });
+    watch(ref.id,nameOf(to),true);
+    push(to,video?"Входящий видеозвонок":"Входящий звонок",nameOf(uid)+(video?" звонит вам по видео":" звонит вам"));
+    const myId=ref.id;
+    setTimeout(()=>{if(callId===myId&&!active){say("Нет ответа");endCall("missed")}},45000);
+  }catch(e){
+    say("Ошибка звонка: "+(e.message||e));
+    endCall("ended");
+  }
+}
+
+/* --- выбор: аудио или видео --- */
+function chooseCall(){
+  if(pc||callId)return say("Звонок уже идёт");
+  modal(b=>{
+    b.appendChild(el("h3","","Позвонить"));
+    const col=el("div");
+    col.style.cssText="display:flex;flex-direction:column;gap:8px";
+    const a=el("button","","📞 Аудиозвонок"),v=el("button","","📹 Видеозвонок"),x=el("button","g","Отмена");
+    a.onclick=()=>{closeM();startCall(false)};
+    v.onclick=()=>{closeM();startCall(true)};
+    x.onclick=closeM;
+    col.append(a,v,x);
+    b.appendChild(col);
+  });
+}
+
+function incoming(id,d){
+  pending=id;
+  try{navigator.vibrate&&navigator.vibrate([300,150,300])}catch(e){}
+  showUI(nameOf(d.from)+(d.video?" · видео":""),"Входящий звонок…",[
+    ["Отклонить","d",()=>{
+      pending=null;hideUI();
+      db.collection("calls").doc(id).update({status:"declined"}).catch(()=>{});
+    }],
+    ["Принять","",()=>accept(id,d)]
+  ]);
+}
+async function accept(id,d){
+  pending=null;
+  showUI(nameOf(d.from),"Соединяю…",[["Завершить","d",()=>endCall("ended")]]);
+  stream=await media(!!d.video);
+  if(!stream){
+    hideUI();
+    db.collection("calls").doc(id).update({status:"declined"}).catch(()=>{});
+    return;
+  }
+  isVideo=!!d.video;
+  try{
+    pc=makePc();
+    callId=id;
+    showUI(nameOf(d.from),"Соединяю…",[["Завершить","d",()=>endCall("ended")]]);
+    await pc.setRemoteDescription(d.offer);
+    await pc.setLocalDescription(await pc.createAnswer());
+    await gathered(pc);
+    if(!pc)return;
+    await db.collection("calls").doc(id).update({
+      answer:{type:pc.localDescription.type,sdp:pc.localDescription.sdp},
+      status:"active"
+    });
+    watch(id,nameOf(d.from),false);
+  }catch(e){
+    say("Ошибка звонка: "+(e.message||e));
+    endCall("ended");
+  }
+}
+
+function listen(){
+  db.collection("calls").where("to","==",uid).where("status","==","ringing").onSnapshot(qs=>{
+    qs.docChanges().forEach(ch=>{
+      if(ch.type==="removed"){
+        if(pending===ch.doc.id&&!callId){pending=null;hideUI()}
+        return;
+      }
+      if(ch.type!=="added")return;
+      const d=ch.doc.data();
+      if(Date.now()-d.ts>60000)return;
+      if(pc||callId||pending){
+        db.collection("calls").doc(ch.doc.id).update({status:"declined"}).catch(()=>{});
+        return;
+      }
+      incoming(ch.doc.id,d);
+    });
+  },e=>say("Звонки: "+e.message));
+}
+
+const PHONE='<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/></svg>';
+function addBtn(){
+  try{
+    const c=typeof curChat==="function"?curChat():null;
+    const h=$("head");
+    if(!h||!c||!c.dm||$("callbtn"))return;
+    const b=document.createElement("button");
+    b.id="callbtn";
+    b.className="hb";
+    b.innerHTML=PHONE;
+    b.style.cssText="background:#22c55e!important;color:#fff!important;border-radius:50%!important;width:44px!important;height:44px!important;min-width:44px!important;padding:0!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;opacity:1!important;flex:none!important;position:relative;z-index:5;margin-left:6px";
+    b.title="Позвонить";
+    b.onclick=chooseCall;
+    h.appendChild(b);
+  }catch(e){}
+}
+const _rm=window.renderMain;
+if(typeof _rm==="function"){
+  window.renderMain=function(){
+    const r=_rm.apply(this,arguments);
+    addBtn();
+    return r;
+  };
+}
+
+const iv=setInterval(()=>{
+  if(typeof me!=="undefined"&&me&&typeof uid!=="undefined"&&uid&&typeof db!=="undefined"&&db){
+    clearInterval(iv);
+    listen();
+    addBtn();
+  }
+},800);
+})();
+     </script>
+
+ <script type="text/plain">
 /* ===== Голосовые звонки 1 на 1 ===== */
 (function(){
 const PUSH_URL="https://kolobok-push.sashok08700.workers.dev";
