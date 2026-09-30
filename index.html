@@ -1016,7 +1016,7 @@ proto.add=function(data){
 /* ===== Голосовые звонки 1 на 1 ===== */
 (function(){
 const PUSH_URL="https://kolobok-push.sashok08700.workers.dev";
-const ICE={iceServers:[{urls:["stun:stun.l.google.com:19302","stun:stun1.l.google.com:19302"]}]};
+const ICE={iceServers:[{urls:"stun:stun.relay.metered.ca:80"},{urls:"turn:global.relay.metered.ca:80",username:"e526841af336766854f193bc",credential:"0NAv3M2MApQcjCrH"},{urls:"turn:global.relay.metered.ca:80?transport=tcp",username:"e526841af336766854f193bc",credential:"0NAv3M2MApQcjCrH"},{urls:"turn:global.relay.metered.ca:443",username:"e526841af336766854f193bc",credential:"0NAv3M2MApQcjCrH"},{urls:"turns:global.relay.metered.ca:443?transport=tcp",username:"e526841af336766854f193bc",credential:"0NAv3M2MApQcjCrH"}]};const ICE={iceServers:[{urls:["stun:stun.l.google.com:19302","stun:stun1.l.google.com:19302"]}]};
 let pc=null,stream=null,callId=null,unsub=null,timer=null,ui=null,audioEl=null,active=false,pending=null;
 
 const $=id=>document.getElementById(id);
