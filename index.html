@@ -1872,4 +1872,24 @@ logout=function(){try{localStorage.removeItem("kolo_auth")}catch(e){}firebase.au
   });
 })();
  </script>
+ <script>
+/* ===== без мерцания чата ===== */
+(function(){
+  const st=document.createElement("style");
+  st.textContent=".mr{animation:none!important}";
+  document.head.appendChild(st);
+
+  const _d=window.drawMsgs;
+  let sig="";
+  window.drawMsgs=function(list){
+    const c=curChat(),box=document.getElementById("msgs");
+    const s=(c?c.id:"")+"|"+list.map(m=>(m._id||m.ts)+":"+(m.text||"").length).join(",")+"|"+JSON.stringify((c&&c.reads)||{});
+    if(s===sig&&box&&box.children.length)return;
+    sig=s;
+    return _d.apply(this,arguments);
+  };
+  const _rm=window.renderMain;
+  window.renderMain=function(){sig="";return _rm.apply(this,arguments)};
+})();
+ </script>
 </html>
