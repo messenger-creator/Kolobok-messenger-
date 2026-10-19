@@ -6,6 +6,7 @@
 <title>Веб-мессенджер</title>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+ <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#000000">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -1824,4 +1825,51 @@ function decorate(list){
 })();
  </script>
 </body>
+ <script>
+function showAuth(){
+  const r=$("root");r.innerHTML="";$("tabhost").style.display="none";
+  const w=el("div");w.id="reg";const h=el("h2","","Вход");w.appendChild(h);
+  const lg=el("input");lg.placeholder="Логин (латиница, цифры, _)";lg.maxLength=20;lg.autocapitalize="none";
+  const pw=el("input");pw.type="password";pw.placeholder="Пароль (от 6 символов)";pw.style.marginTop="8px";
+  const go=el("button","","Войти"),sw=el("button","g","Создать аккаунт");
+  go.style.cssText="width:100%;margin-top:14px";sw.style.cssText="width:100%;margin-top:8px";
+  let reg=false;
+  sw.onclick=()=>{reg=!reg;h.textContent=reg?"Регистрация":"Вход";go.textContent=reg?"Зарегистрироваться":"Войти";sw.textContent=reg?"У меня уже есть аккаунт":"Создать аккаунт"};
+  go.onclick=async()=>{
+    const l=lg.value.trim().toLowerCase();
+    if(!/^[a-z0-9_]{3,20}$/.test(l))return toast("Логин: 3–20 символов, латиница, цифры, _");
+    if(pw.value.length<6)return toast("Пароль минимум 6 символов");
+    go.disabled=true;
+    try{
+      const em=l+"@myder6.app",a=firebase.auth();
+      if(reg)await a.createUserWithEmailAndPassword(em,pw.value);else await a.signInWithEmailAndPassword(em,pw.value);
+      location.reload();
+    }catch(e){
+      go.disabled=false;
+      const c=e.code||"";
+      toast(c.includes("email-already")?"Такой логин уже занят":c.includes("weak")?"Пароль слишком простой":c.includes("network")?"Нет сети":"Неверный логин или пароль");
+    }
+  };
+  w.append(lg,pw,go,sw);r.appendChild(w);
+}
+logout=function(){try{localStorage.removeItem("kolo_auth")}catch(e){}firebase.auth().signOut().then(()=>location.reload())};
+(function(){
+  let ok=false;try{ok=localStorage.getItem("kolo_auth")==="1"}catch(e){}
+  if(!ok){window.showReg=showAuth;window.showApp=showAuth}
+  firebase.auth().onAuthStateChanged(u=>{
+    try{
+      if(!u){
+        if(ok){localStorage.removeItem("kolo_auth");location.reload()}
+        else showAuth();
+        return;
+      }
+      if(localStorage.getItem("uid")!==u.uid||localStorage.getItem("kolo_auth")!=="1"){
+        localStorage.setItem("uid",u.uid);
+        localStorage.setItem("kolo_auth","1");
+        location.reload();
+      }
+    }catch(e){}
+  });
+})();
+ </script>
 </html>
