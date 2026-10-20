@@ -1892,4 +1892,205 @@ logout=function(){try{localStorage.removeItem("kolo_auth")}catch(e){}firebase.au
   window.renderMain=function(){sig="";return _rm.apply(this,arguments)};
 })();
  </script>
+ <script>
+/* ===== Видеокружочки ===== */
+(function(){
+const $=id=>document.getElementById(id);
+const VMAX=15,LIMIT=900000;
+let vmode=false;try{vmode=localStorage.getItem("vmode")==="1"}catch(e){}
+const S='<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">';
+const CAM=S+'<rect x="3" y="6" width="13" height="12" rx="3"/><path d="M16 10l5-3v10l-5-3z"/></svg>';
+const CAMSEND=CAM.replace("<svg ",'<svg data-c="1" ');
+const MICI=S+'<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
+const f2=x=>Math.floor(x/60)+":"+String(Math.floor(x%60)).padStart(2,"0");
+
+const st0=document.createElement("style");
+st0.textContent=`
+#bar.rec #vmode{display:none!important}
+#vo{position:fixed;inset:0;z-index:60;background:#000d;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;padding:16px}
+#vo .vc{position:relative;width:280px;height:280px;max-width:80vw;max-height:80vw}
+#vo video{width:100%;height:100%;border-radius:50%;object-fit:cover;background:#111;display:block}
+#vo svg.ring{position:absolute;left:-6px;top:-6px;width:calc(100% + 12px);height:calc(100% + 12px);transform:rotate(-90deg);pointer-events:none}
+#vo .vt{color:#fff;font-size:18px;font-weight:600;min-height:26px}
+#vo .vb{display:flex;gap:16px;align-items:center}
+#vo .vb button{width:58px;height:58px;padding:0;border-radius:50%;font-size:22px;display:flex;align-items:center;justify-content:center}
+#vo .vb .rec{background:#e5484d!important}
+.rv{position:relative;width:200px;height:200px;cursor:pointer}
+.rv video{width:100%;height:100%;border-radius:50%;object-fit:cover;background:#111;display:block}
+.rv svg{position:absolute;left:-4px;top:-4px;width:calc(100% + 8px);height:calc(100% + 8px);transform:rotate(-90deg);pointer-events:none}
+.rv .rd2{position:absolute;left:8px;top:8px;background:#0008;color:#fff;border-radius:10px;padding:1px 8px;font-size:12px}`;
+document.head.appendChild(st0);
+
+/* кнопка-переключатель и значок на большой кнопке */
+function ensureBtn(){
+  const clip=$("clip");
+  if(!clip||$("vmode"))return;
+  const b=document.createElement("button");
+  b.id="vmode";b.className="ib3";b.innerHTML=vmode?CAM:MICI;
+  b.onclick=()=>{
+    vmode=!vmode;try{localStorage.setItem("vmode",vmode?"1":"0")}catch(e){}
+    b.innerHTML=vmode?CAM:MICI;
+    toast(vmode?"Теперь записываем кружочки":"Теперь записываем голосовые");
+  };
+  clip.parentNode.insertBefore(b,clip);
+}
+setInterval(()=>{
+  ensureBtn();
+  const b=$("send"),i=$("in");if(!b||!i)return;
+  const vr=typeof rec!=="undefined"&&rec;
+  const want=vmode&&!vr&&!i.value.trim();
+  const has=!!b.querySelector("svg[data-c]");
+  if(want){if(!has)b.innerHTML=CAMSEND}
+  else if(has){b.dataset.m=""}
+},250);
+
+/* нажатие на большую кнопку в режиме кружочков */
+document.addEventListener("click",e=>{
+  const b=e.target.closest&&e.target.closest("#send");
+  if(!b)return;
+  const i=$("in");
+  if(vmode&&i&&!i.value.trim()&&!(typeof rec!=="undefined"&&rec)){
+    e.stopImmediatePropagation();e.preventDefault();openRec();
+  }
+},true);
+
+/* запись */
+let st=null,face="user",mr=null,ch=[],t0=0,iv=null,send=false,ov=null,phase=0,mt="",rcid=null;
+
+async function getCam(){
+  if(st){st.getTracks().forEach(t=>t.stop());st=null}
+  let s;
+  try{
+    s=await navigator.mediaDevices.getUserMedia({audio:true,video:{facingMode:face,width:{ideal:240},height:{ideal:240},aspectRatio:{ideal:1},frameRate:{ideal:15,max:24}}});
+  }catch(e){close();toast("Нет доступа к камере или микрофону");return false}
+  if(!ov){s.getTracks().forEach(t=>t.stop());return false}
+  st=s;
+  const v=ov.querySelector("video");
+  if(v){v.srcObject=st;v.style.transform=face==="user"?"scaleX(-1)":"none";v.play().catch(()=>{})}
+  return true;
+}
+async function openRec(){
+  if(ov)return;
+  if(!navigator.mediaDevices||!window.MediaRecorder)return toast("Запись недоступна в этом браузере");
+  const c=curChat();if(!c)return;
+  rcid=c.id;
+  ov=document.createElement("div");ov.id="vo";
+  ov.innerHTML='<div class="vc"><video muted playsinline autoplay></video>'+
+   '<svg class="ring" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="none" stroke="rgba(255,255,255,.3)" stroke-width="2"/>'+
+   '<circle id="vring" cx="50" cy="50" r="48" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-dasharray="301.6" stroke-dashoffset="301.6"/></svg></div>'+
+   '<div class="vt" id="vtm">Нажмите ●, чтобы начать</div>'+
+   '<div class="vb"><button class="g" id="vx">✕</button><button class="g" id="vsw">🔄</button><button class="rec" id="vgo">●</button></div>';
+  document.body.appendChild(ov);
+  phase=0;
+  $("vx").onclick=close;
+  $("vsw").onclick=async()=>{if(phase)return;face=face==="user"?"environment":"user";await getCam()};
+  $("vgo").onclick=()=>phase?finish():begin();
+  await getCam();
+}
+function begin(){
+  if(!st||phase)return;
+  const types=["video/webm;codecs=vp8,opus","video/webm","video/mp4"];
+  mt=types.find(t=>MediaRecorder.isTypeSupported(t))||"";
+  let r;
+  try{r=mt?new MediaRecorder(st,{mimeType:mt,videoBitsPerSecond:200000,audioBitsPerSecond:32000}):new MediaRecorder(st)}
+  catch(e){return toast("Не удалось начать запись")}
+  mr=r;ch=[];send=false;
+  r.ondataavailable=e=>{if(e.data&&e.data.size)ch.push(e.data)};
+  r.onstop=()=>{
+    const s=send,dur=Math.round((Date.now()-t0)/1000),type=r.mimeType||mt||"video/webm",parts=ch,id=rcid;
+    close();
+    if(s)sendRound(new Blob(parts,{type}),dur,id);
+  };
+  r.start(500);t0=Date.now();phase=1;
+  $("vgo").textContent="➤";$("vgo").classList.remove("rec");$("vsw").style.display="none";
+  iv=setInterval(tick,100);
+}
+function tick(){
+  const x=(Date.now()-t0)/1000,tm=$("vtm"),rg=$("vring");
+  if(tm)tm.textContent=f2(x)+" / 0:"+VMAX;
+  if(rg)rg.style.strokeDashoffset=String(301.6*(1-Math.min(1,x/VMAX)));
+  if(x>=VMAX)finish();
+}
+function finish(){
+  if(!mr||mr.state==="inactive")return;
+  if((Date.now()-t0)/1000<1)return toast("Слишком короткое");
+  send=true;
+  if(iv){clearInterval(iv);iv=null}
+  const tm=$("vtm");if(tm)tm.textContent="Обработка…";
+  try{mr.stop()}catch(e){close()}
+}
+function close(){
+  if(iv){clearInterval(iv);iv=null}
+  const r=mr;mr=null;
+  if(r&&r.state!=="inactive"&&!send){try{r.stop()}catch(e){}}
+  if(st){st.getTracks().forEach(t=>t.stop());st=null}
+  if(ov){ov.remove();ov=null}
+  phase=0;
+}
+async function sendRound(blob,dur,cid){
+  if(!cid)return;
+  const tb=$("toast");tb.textContent="Отправка…";tb.style.display="block";
+  try{
+    const dt=await new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=no;r.readAsDataURL(blob)});
+    if(dt.length>LIMIT)throw new Error("слишком большой файл, запишите покороче");
+    await db.collection("chats/"+cid+"/messages").add({from:uid,text:"",ts:Date.now(),media:{data:dt,kind:"video",round:true,dur:dur}});
+    tb.style.display="none";
+  }catch(e){tb.style.display="none";toast("Не отправлено: "+(e.code||e.message))}
+}
+
+/* показ кружочков в чате */
+function makePlayer(md){
+  const w=document.createElement("div");w.className="rv";
+  const v=document.createElement("video");
+  v.src=md.data;v.muted=true;v.loop=true;v.playsInline=true;v.setAttribute("playsinline","");v.preload="auto";
+  w.appendChild(v);
+  const NS="http://www.w3.org/2000/svg",sv=document.createElementNS(NS,"svg"),cr=document.createElementNS(NS,"circle");
+  sv.setAttribute("viewBox","0 0 100 100");
+  [["cx",50],["cy",50],["r",48],["fill","none"],["stroke","#fff"],["stroke-width",3],["stroke-linecap","round"],["stroke-dasharray","301.6"],["stroke-dashoffset","301.6"]].forEach(a=>cr.setAttribute(a[0],a[1]));
+  sv.appendChild(cr);w.appendChild(sv);
+  const dd=document.createElement("div");dd.className="rd2";dd.textContent=f2(md.dur||0);w.appendChild(dd);
+  let full=false;
+  v.ontimeupdate=()=>{if(full&&v.duration)cr.setAttribute("stroke-dashoffset",String(301.6*(1-v.currentTime/v.duration)))};
+  v.onended=()=>{full=false;v.loop=true;v.muted=true;cr.setAttribute("stroke-dashoffset","301.6");dd.style.display="";v.currentTime=0;v.play().catch(()=>{})};
+  w.onclick=e=>{
+    e.stopPropagation();
+    if(!full){
+      document.querySelectorAll(".rv video").forEach(x=>{if(x!==v&&!x.muted&&x.onended)x.onended()});
+      full=true;v.loop=false;v.muted=false;v.currentTime=0;dd.style.display="none";v.play().catch(()=>{});
+    }else{v.paused?v.play().catch(()=>{}):v.pause()}
+  };
+  if(window.IntersectionObserver){
+    const io=new IntersectionObserver(es=>es.forEach(en=>{
+      if(full)return;
+      if(en.isIntersecting)v.play().catch(()=>{});else v.pause();
+    }),{threshold:.4});
+    io.observe(w);
+  }else v.autoplay=true;
+  return w;
+}
+function roundify(list,box){
+  if(!box)return;
+  [...box.querySelectorAll(".mr")].forEach((row,i)=>{
+    const m=list[i];
+    if(!m||!m.media||!m.media.round)return;
+    const bub=row.querySelector(".m");
+    if(!bub||bub.dataset.rv)return;
+    bub.dataset.rv="1";
+    const old=bub.querySelector("video.mm");if(old)old.remove();
+    const nm=bub.querySelector("b");if(nm)nm.remove();
+    bub.style.cssText+=";background:none!important;box-shadow:none!important;padding:0!important;border:0!important";
+    bub.insertBefore(makePlayer(m.media),bub.firstChild);
+  });
+}
+const _d=window.drawMsgs;
+window.drawMsgs=function(list){
+  const box=$("msgs");
+  const was=box&&(box.scrollHeight-box.scrollTop-box.clientHeight<80);
+  const r=_d.apply(this,arguments);
+  try{roundify(list,box)}catch(e){}
+  if(was&&box)box.scrollTop=box.scrollHeight;
+  return r;
+};
+})();
+ </script>
 </html>
