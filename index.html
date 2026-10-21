@@ -1897,121 +1897,119 @@ logout=function(){try{localStorage.removeItem("kolo_auth")}catch(e){}firebase.au
 (function(){
 const $=id=>document.getElementById(id);
 const VMAX=15,LIMIT=900000;
-let vmode=false;try{vmode=localStorage.getItem("vmode")==="1"}catch(e){}
 const S='<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">';
 const CAM=S+'<rect x="3" y="6" width="13" height="12" rx="3"/><path d="M16 10l5-3v10l-5-3z"/></svg>';
-const CAMSEND=CAM.replace("<svg ",'<svg data-c="1" ');
-const MICI=S+'<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
 const f2=x=>Math.floor(x/60)+":"+String(Math.floor(x%60)).padStart(2,"0");
 
 const st0=document.createElement("style");
 st0.textContent=`
-#bar.rec #vmode{display:none!important}
+#bar.rec #vrecord{display:none!important}
 #vo{position:fixed;inset:0;z-index:60;background:#000d;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;padding:16px}
 #vo .vc{position:relative;width:280px;height:280px;max-width:80vw;max-height:80vw}
 #vo video{width:100%;height:100%;border-radius:50%;object-fit:cover;background:#111;display:block}
 #vo svg.ring{position:absolute;left:-6px;top:-6px;width:calc(100% + 12px);height:calc(100% + 12px);transform:rotate(-90deg);pointer-events:none}
 #vo .vt{color:#fff;font-size:18px;font-weight:600;min-height:26px}
-#vo .vb{display:flex;gap:16px;align-items:center}
-#vo .vb button{width:58px;height:58px;padding:0;border-radius:50%;font-size:22px;display:flex;align-items:center;justify-content:center}
-#vo .vb .rec{background:#e5484d!important}
+#vo .vb{display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap}
+#vo .vb button{min-width:58px;min-height:52px;padding:8px 14px;border-radius:28px;font-size:16px}
+#vo .vb .rec{background:#e5484d!important;color:#fff}
+#vo .vb button[hidden]{display:none!important}
+#vo .vb button:disabled{opacity:.5}
 .rv{position:relative;width:200px;height:200px;cursor:pointer}
 .rv video{width:100%;height:100%;border-radius:50%;object-fit:cover;background:#111;display:block}
 .rv svg{position:absolute;left:-4px;top:-4px;width:calc(100% + 8px);height:calc(100% + 8px);transform:rotate(-90deg);pointer-events:none}
 .rv .rd2{position:absolute;left:8px;top:8px;background:#0008;color:#fff;border-radius:10px;padding:1px 8px;font-size:12px}`;
 document.head.appendChild(st0);
 
-/* кнопка-переключатель и значок на большой кнопке */
+/* Отдельная кнопка камеры: отправка текста и голосовых остаётся прежней. */
 function ensureBtn(){
   const clip=$("clip");
-  if(!clip||$("vmode"))return;
+  if(!clip||$("vrecord"))return;
   const b=document.createElement("button");
-  b.id="vmode";b.className="ib3";b.innerHTML=vmode?CAM:MICI;
-  b.onclick=()=>{
-    vmode=!vmode;try{localStorage.setItem("vmode",vmode?"1":"0")}catch(e){}
-    b.innerHTML=vmode?CAM:MICI;
-    toast(vmode?"Теперь записываем кружочки":"Теперь записываем голосовые");
-  };
+  b.id="vrecord";b.className="ib3";b.innerHTML=CAM;
+  b.type="button";b.title="Записать видеокружок";b.setAttribute("aria-label",b.title);
+  b.onclick=openRec;
   clip.parentNode.insertBefore(b,clip);
 }
-setInterval(()=>{
-  ensureBtn();
-  const b=$("send"),i=$("in");if(!b||!i)return;
-  const vr=typeof rec!=="undefined"&&rec;
-  const want=vmode&&!vr&&!i.value.trim();
-  const has=!!b.querySelector("svg[data-c]");
-  if(want){if(!has)b.innerHTML=CAMSEND}
-  else if(has){b.dataset.m=""}
-},250);
+const root=$("root");
+if(root)new MutationObserver(ensureBtn).observe(root,{childList:true,subtree:true});
+ensureBtn();
 
-/* нажатие на большую кнопку в режиме кружочков */
-document.addEventListener("click",e=>{
-  const b=e.target.closest&&e.target.closest("#send");
-  if(!b)return;
-  const i=$("in");
-  if(vmode&&i&&!i.value.trim()&&!(typeof rec!=="undefined"&&rec)){
-    e.stopImmediatePropagation();e.preventDefault();openRec();
-  }
-},true);
-
-/* запись */
-let st=null,face="user",mr=null,ch=[],t0=0,iv=null,send=false,ov=null,phase=0,mt="",rcid=null;
-
+/* Запись, просмотр и отправка — три отдельных шага. */
+let st=null,face="user",mr=null,ch=[],t0=0,iv=null,ov=null,phase="idle",rcid=null;
+let recorded=null,duration=0,previewURL=null,runId=0;
+const stopTracks=s=>{if(s)s.getTracks().forEach(t=>t.stop())};
+function showControls(){
+  if(!ov)return;
+  $("vsw").hidden=phase!=="idle";
+  $("vgo").hidden=phase!=="idle"&&phase!=="recording";
+  $("vgo").textContent=phase==="recording"?"■ Стоп":"● Запись";
+  $("vgo").classList.toggle("rec",phase==="recording"||phase==="idle");
+  $("vredo").hidden=phase!=="review";
+  $("vsend").hidden=phase!=="review"&&phase!=="sending";
+  $("vsend").disabled=phase==="sending";
+  $("vx").disabled=phase==="sending";
+}
 async function getCam(){
-  if(st){st.getTracks().forEach(t=>t.stop());st=null}
+  const token=runId;
   let s;
   try{
-    s=await navigator.mediaDevices.getUserMedia({audio:true,video:{facingMode:face,width:{ideal:240},height:{ideal:240},aspectRatio:{ideal:1},frameRate:{ideal:15,max:24}}});
-  }catch(e){close();toast("Нет доступа к камере или микрофону");return false}
-  if(!ov){s.getTracks().forEach(t=>t.stop());return false}
-  st=s;
+    s=await navigator.mediaDevices.getUserMedia({audio:true,video:{facingMode:{ideal:face},width:{ideal:240},height:{ideal:240},frameRate:{ideal:15,max:24}}});
+  }catch(e){toast(e.name==="NotAllowedError"?"Разрешите доступ к камере и микрофону":"Камера недоступна: "+(e.message||e.name));return false}
+  if(!ov||token!==runId){stopTracks(s);return false}
+  stopTracks(st);st=s;
   const v=ov.querySelector("video");
-  if(v){v.srcObject=st;v.style.transform=face==="user"?"scaleX(-1)":"none";v.play().catch(()=>{})}
+  v.srcObject=s;v.muted=true;v.controls=false;
+  v.style.transform=face==="user"?"scaleX(-1)":"none";
+  v.play().catch(()=>{});
   return true;
 }
 async function openRec(){
   if(ov)return;
-  if(!navigator.mediaDevices||!window.MediaRecorder)return toast("Запись недоступна в этом браузере");
-  const c=curChat();if(!c)return;
-  rcid=c.id;
+  if(!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder)return toast("Запись недоступна в этом браузере");
+  const c=curChat();if(!c)return toast("Сначала откройте чат");
+  rcid=c.id;phase="idle";runId++;
   ov=document.createElement("div");ov.id="vo";
   ov.innerHTML='<div class="vc"><video muted playsinline autoplay></video>'+
    '<svg class="ring" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="none" stroke="rgba(255,255,255,.3)" stroke-width="2"/>'+
    '<circle id="vring" cx="50" cy="50" r="48" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-dasharray="301.6" stroke-dashoffset="301.6"/></svg></div>'+
-   '<div class="vt" id="vtm">Нажмите ●, чтобы начать</div>'+
-   '<div class="vb"><button class="g" id="vx">✕</button><button class="g" id="vsw">🔄</button><button class="rec" id="vgo">●</button></div>';
+   '<div class="vt" id="vtm">Открываем камеру…</div>'+
+   '<div class="vb"><button class="g" id="vx" type="button">Отмена</button><button class="g" id="vsw" type="button">🔄</button><button class="rec" id="vgo" type="button">● Запись</button><button class="g" id="vredo" type="button" hidden>Перезаписать</button><button id="vsend" type="button" hidden>Отправить</button></div>';
   document.body.appendChild(ov);
-  phase=0;
   $("vx").onclick=close;
-  $("vsw").onclick=async()=>{if(phase)return;face=face==="user"?"environment":"user";await getCam()};
-  $("vgo").onclick=()=>phase?finish():begin();
-  await getCam();
+  $("vsw").onclick=async()=>{
+    if(phase!=="idle")return;
+    const old=face;face=face==="user"?"environment":"user";
+    if(!await getCam())face=old;
+  };
+  $("vgo").onclick=()=>phase==="recording"?finish():begin();
+  $("vredo").onclick=redo;
+  $("vsend").onclick=sendRound;
+  showControls();
+  if(await getCam()&&ov)$("vtm").textContent="Нажмите «Запись»";
+  else if(ov)close();
 }
 function begin(){
-  if(!st||phase)return;
+  if(!st||phase!=="idle")return;
   let r;
-  /* Сначала даём браузеру самому выбрать рабочий контейнер и кодек.
-     Некоторые Android-браузеры сообщают, что VP8 поддерживается, но затем
-     записывают чёрное видео при принудительном mimeType. */
-  try{
-    r=new MediaRecorder(st,{videoBitsPerSecond:300000,audioBitsPerSecond:32000});
-    mt=r.mimeType||"";
-  }catch(e){
-    const types=["video/mp4","video/webm;codecs=vp8,opus","video/webm"];
-    mt=types.find(t=>MediaRecorder.isTypeSupported(t))||"";
-    try{r=mt?new MediaRecorder(st,{mimeType:mt}):new MediaRecorder(st)}
-    catch(x){return toast("Не удалось начать запись: "+(x.message||x))}
-  }
-  mr=r;ch=[];send=false;
+  try{r=new MediaRecorder(st,{videoBitsPerSecond:240000,audioBitsPerSecond:32000})}
+  catch(e){try{r=new MediaRecorder(st)}catch(x){return toast("Не удалось начать запись: "+(x.message||x))}}
+  mr=r;ch=[];recorded=null;
+  const token=runId;
   r.ondataavailable=e=>{if(e.data&&e.data.size)ch.push(e.data)};
+  r.onerror=e=>{if(token===runId){toast("Ошибка записи: "+(e.error?.message||"попробуйте ещё раз"));close()}};
   r.onstop=()=>{
-    const s=send,dur=Math.round((Date.now()-t0)/1000),type=r.mimeType||mt||"video/webm",parts=ch,id=rcid;
-    close();
-    if(s)sendRound(new Blob(parts,{type}),dur,id);
+    if(token!==runId||!ov)return;
+    recorded=new Blob(ch,{type:r.mimeType||ch[0]?.type||"video/webm"});
+    stopTracks(st);st=null;mr=null;
+    if(!recorded.size){toast("Не удалось записать видео");close();return}
+    previewURL=URL.createObjectURL(recorded);
+    const v=ov.querySelector("video");v.srcObject=null;v.src=previewURL;v.muted=false;v.controls=true;v.style.transform="none";v.load();
+    phase="review";$("vtm").textContent=f2(duration)+" · Проверьте запись";
+    showControls();
   };
-  r.start(500);t0=Date.now();phase=1;
-  $("vgo").textContent="➤";$("vgo").classList.remove("rec");$("vsw").style.display="none";
-  iv=setInterval(tick,100);
+  try{r.start(1000)}catch(e){mr=null;return toast("Не удалось начать запись: "+(e.message||e))}
+  t0=Date.now();phase="recording";showControls();
+  iv=setInterval(tick,100);tick();
 }
 function tick(){
   const x=(Date.now()-t0)/1000,tm=$("vtm"),rg=$("vring");
@@ -2020,30 +2018,47 @@ function tick(){
   if(x>=VMAX)finish();
 }
 function finish(){
-  if(!mr||mr.state==="inactive")return;
-  if((Date.now()-t0)/1000<1)return toast("Слишком короткое");
-  send=true;
+  if(phase!=="recording"||!mr||mr.state==="inactive")return;
+  duration=Math.max(1,Math.round((Date.now()-t0)/1000));
   if(iv){clearInterval(iv);iv=null}
-  const tm=$("vtm");if(tm)tm.textContent="Обработка…";
-  try{mr.stop()}catch(e){close()}
+  phase="processing";$("vtm").textContent="Обработка…";showControls();
+  try{mr.stop()}catch(e){toast("Ошибка записи: "+(e.message||e));close()}
+}
+async function redo(){
+  if(phase!=="review")return;
+  if(previewURL){URL.revokeObjectURL(previewURL);previewURL=null}
+  recorded=null;ch=[];phase="idle";
+  const v=ov.querySelector("video");v.removeAttribute("src");v.load();
+  $("vring").style.strokeDashoffset="301.6";
+  $("vtm").textContent="Открываем камеру…";showControls();
+  if(await getCam()&&ov)$("vtm").textContent="Нажмите «Запись»";
+  else if(ov)close();
 }
 function close(){
+  runId++;
   if(iv){clearInterval(iv);iv=null}
   const r=mr;mr=null;
-  if(r&&r.state!=="inactive"&&!send){try{r.stop()}catch(e){}}
-  if(st){st.getTracks().forEach(t=>t.stop());st=null}
+  if(r&&r.state!=="inactive"){r.onstop=null;r.ondataavailable=null;try{r.stop()}catch(e){}}
+  stopTracks(st);st=null;
+  if(previewURL){URL.revokeObjectURL(previewURL);previewURL=null}
+  recorded=null;ch=[];
   if(ov){ov.remove();ov=null}
-  phase=0;
+  phase="idle";
 }
-async function sendRound(blob,dur,cid){
-  if(!cid)return;
-  const tb=$("toast");tb.textContent="Отправка…";tb.style.display="block";
+async function sendRound(){
+  if(phase!=="review"||!recorded||!rcid)return;
+  const blob=recorded,cid=rcid,dur=duration,token=runId;
+  phase="sending";showControls();$("vtm").textContent="Отправка…";
   try{
-    const dt=await new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=no;r.readAsDataURL(blob)});
-    if(dt.length>LIMIT)throw new Error("слишком большой файл, запишите покороче");
-    await db.collection("chats/"+cid+"/messages").add({from:uid,text:"",ts:Date.now(),media:{data:dt,kind:"video",round:true,dur:dur}});
-    tb.style.display="none";
-  }catch(e){tb.style.display="none";toast("Не отправлено: "+(e.code||e.message))}
+    const dt=await new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=()=>no(r.error);r.readAsDataURL(blob)});
+    if(dt.length>LIMIT)throw new Error("Кружок слишком большой — перезапишите короче");
+    await db.collection("chats/"+cid+"/messages").add({from:uid,text:"",ts:Date.now(),media:{data:dt,kind:"video",round:true,dur}});
+    if(token===runId)close();
+  }catch(e){
+    if(!ov||token!==runId)return;
+    phase="review";showControls();$("vtm").textContent="Не отправлено. Можно повторить";
+    toast("Не отправлено: "+(e.code||e.message||"ошибка сети"));
+  }
 }
 
 /* показ кружочков в чате */
